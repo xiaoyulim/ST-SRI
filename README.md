@@ -9,77 +9,88 @@
 
 ```
 ST_SRI_Project/
-├── data/                          # NinaPro DB2 数据
-│   ├── S1_data.npy                # E1 (手势) 数据
-│   ├── S1_E2_A1.mat               # E2 (含force) 数据
+├── scripts/                      # 工具脚本
+│   ├── 01_preproccess.py         # 数据预处理
+│   ├── check_acc.py              # 检查模型准确率
+│   └── check_e2_structure.py     # 检查E2数据结构
+│
+├── experiments/                  # 实验代码
+│   ├── baseline/                 # 基线实验
+│   │   ├── e0.py
+│   │   └── e0_train.py
+│   │
+│   ├── basic/                    # 基础实验 (E1-E6)
+│   │   ├── e1.py                 # 消融实验
+│   │   ├── e2.py                 # 机理验证
+│   │   ├── e3.py                 # 生理验证
+│   │   ├── e4.py                 # 稳定性对比
+│   │   ├── e5.py                 # 忠实度评估
+│   │   ├── e5_enhanced.py        # 忠实度增强
+│   │   └── e6.py                 # 敏感性分析
+│   │
+│   └── advanced/                 # 补充实验
+│       ├── exp_emd_direct.py     # 实验一：EMD直接量化
+│       ├── exp_anticipation.py   # 实验二：提前预测
+│       ├── exp_alignment.py      # 实验四：自适应对齐
+│       ├── exp_channel_selection_full.py  # 实验五：通道筛选
+│       ├── exp_loso_full.py      # 实验六：LOSO跨受试者
+│       └── exp_generalization.py # 实验六：噪声鲁棒性
+│
+├── common.py                     # 核心模块（模型、数据集、ST-SRI）
+│
+├── data/                         # NinaPro DB2 数据
+│   ├── S1_data.npy               # E1 (手势) 数据
+│   ├── S1_E2_A1.mat              # E2 (含force) 数据
 │   └── ...
 │
-├── checkpoints_2000hz/            # 预训练模型
-├── checkpoints_anticipation/      # 提前预测模型
-├── checkpoints_alignment/         # 自适应对齐模型
+├── checkpoints/                  # 预训练模型
+│   ├── checkpoints_2000hz/       # 基础模型
+│   ├── checkpoints_anticipation/ # 提前预测模型
+│   └── checkpoints_alignment/    # 对齐模型
 │
-├── common.py                      # 核心模块
-├── 01_preproccess.py              # 数据预处理
+├── results/                      # 实验结果
+│   ├── e3.png                    # E3结果
+│   ├── e5_faithfulness/          # E5忠实度
+│   ├── anticipation/             # 提前预测
+│   ├── alignment/               # 自适应对齐
+│   ├── emd_direct/              # EMD直接量化
+│   ├── loso/                    # LOSO
+│   └── generalization/          # 噪声鲁棒性
 │
-├── e1.py ~ e6.py                  # 基础实验
-├── e5_enhanced.py                 # E5增强版
-├── exp_anticipation.py            # 实验二：提前预测
-├── exp_alignment.py               # 实验四：自适应对齐
-├── exp_emd_direct.py              # 实验一：EMD直接量化
-├── exp_channel_selection_full.py  # 实验五：通道筛选
-├── exp_loso_full.py               # 实验六：LOSO跨受试者
-├── exp_generalization.py          # 实验六：噪声鲁棒性
-│
-├── good_subjects.json             # 合格受试者列表
+├── good_subjects.json            # 合格受试者列表
 ├── subject_peaks_e3.json          # E3 ST-SRI检测峰值
 │
-└── results/                       # 实验结果
-    ├── e3.png                     # E3结果
-    ├── e5_faithfulness/           # E5增强结果
-    ├── anticipation/              # 提前预测结果
-    ├── alignment/                 # 对齐结果
-    ├── emd_direct/                # EMD直接量化
-    ├── loso/                      # LOSO结果
-    └── generalization/            # 噪声鲁棒性
+└── README.md                     # 本文件
 ```
 
 ---
 
 ## 🎯 核心实验结果
 
-### E3: 生理验证（EMD 延迟检测）
-- **成功率**: 56.4% (22/39 subjects)
-- **有效峰值**: 55.6 ± 26.5 ms
-- **结论**: 在半数以上受试者中检测到生理合理的 EMD 延迟
+### 基础实验 (E1-E6)
 
-### E5: 忠实度评估（增强版）
-- **统计显著性**: p = 7.3e-07
-- **效应量**: Cohen's d = 0.625 (中等)
-- **影响比 Rf**: 
-  - EMD vs Recent: 1.61
-  - EMD vs Random: 1.096 (p=0.004)
-- **结论**: EMD窗口对预测决策有显著影响
+| 实验 | 目的 | 关键结果 |
+|------|------|----------|
+| E1 | 消融：Vector vs Element遮挡 | Vector更平滑 |
+| E2 | 机理：合成信号验证 | 成功检测50ms延迟 |
+| E3 | 生理：EMD延迟检测 | 56.4%在30-100ms，峰值55.6ms |
+| E4 | 稳定性：ST-SRI vs SHAP | ST-SRI更稳定 |
+| E5 | 忠实度：遮挡实验 | p=7.3e-07, Cohen's d=0.625 |
+| E6 | 敏感性：block_size分析 | 对粒度鲁棒 |
 
-### 实验二：提前预测
-- **Δt***: 250 ms（F1 ≥ 0.80）
-- **F1 @ Δt=250ms**: 0.836 ± 0.080
-- **结论**: 模型可提前250ms预测仍保持较好性能
+### 补充实验
 
-### 实验四：自适应对齐
-- **individual策略**: F1 = 0.873
-- **fixed_55ms策略**: F1 = 0.874
-- **p值**: 0.676（无显著差异）
-- **结论**: 个体化补偿与固定补偿效果等价
+| 实验 | 目的 | 关键结果 |
+|------|------|----------|
+| 实验一 | EMD直接量化 | 86.9±34.6ms (直接检测) vs 65.3ms (ST-SRI) |
+| 实验二 | 提前预测 | Δt*=250ms, F1=0.836 |
+| 实验四 | 自适应对齐 | individual≈fixed_55ms (p=0.676) |
+| 实验五 | 通道筛选 | 性能随通道数下降曲线 |
+| 实验六 | 泛化鲁棒性 | 噪声:84%→59%; LOSO:63.5%±1.5% |
 
-### 实验一：EMD直接量化
-- **直接检测EMD**: 86.9 ± 34.6 ms
-- **ST-SRI检测**: 65.3 ms
-- **相关性**: r = 0.067（低相关）
-- **结论**: 两种方法差异较大，ST-SRI检测的是"功能热点"非物理onset
-
-### 实验六：泛化与鲁棒性
-- **噪声测试**: 准确率从84% (no noise) → 59% (σ=0.3)
-- **LOSO跨受试者**: 63.5% ± 1.5%
+### 增强版E5结果
+- **Rf (EMD/Recent)**: 1.61
+- **Rf (EMD/Random)**: 1.096 (p=0.004)
 
 ---
 
@@ -94,77 +105,39 @@ pip install torch numpy scipy matplotlib pandas scikit-learn
 
 ### 2. 数据预处理
 ```bash
-python 01_preproccess.py
+python scripts/01_preproccess.py
 ```
 
-### 3. 运行核心实验
+### 3. 运行实验
 ```bash
-# 提前预测
-python exp_anticipation.py --mode eval
+# 基线与基础实验
+python experiments/basic/e3.py
+python experiments/basic/e5_enhanced.py
 
-# 自适应对齐
-python exp_alignment.py --mode eval
-
-# EMD直接量化
-python exp_emd_direct.py
-```
-
-### 4. 运行补充实验（需要较长时间）
-```bash
-# 通道筛选 (~2小时)
-python exp_channel_selection_full.py
-
-# LOSO跨受试者 (~30分钟)
-python exp_loso_full.py
-
-# 噪声鲁棒性
-python exp_generalization.py
+# 补充实验
+python experiments/advanced/exp_anticipation.py --mode eval
+python experiments/advanced/exp_alignment.py --mode eval
+python experiments/advanced/exp_emd_direct.py
 ```
 
 ---
 
-## 📊 实验说明
+## 📊 完整证据链
 
-### 基础实验 (E1-E6)
-
-| 实验 | 目的 | 结果 |
-|------|------|------|
-| E1 | 消融：Vector vs Element遮挡 | Vector更平滑 |
-| E2 | 机理：合成信号验证 | 成功检测50ms延迟 |
-| E3 | 生理：EMD延迟检测 | 56.4%在30-100ms |
-| E4 | 稳定性：ST-SRI vs SHAP | ST-SRI更稳定 |
-| E5 | 忠实度：遮挡实验 | p=7.3e-07, d=0.625 |
-| E6 | 敏感性：block_size分析 | 对粒度鲁棒 |
-
-### 补充实验
-
-| 实验 | 目的 | 关键结果 |
-|------|------|----------|
-| 实验一 | EMD直接量化 | 86.9±34.6ms |
-| 实验二 | 提前预测 | Δt*=250ms |
-| 实验四 | 自适应对齐 | individual≈fixed |
-| 实验五 | 通道筛选 | 12→4通道性能曲线 |
-| 实验六 | 泛化鲁棒性 | 噪声/LOSO测试 |
-
----
-
-## 📈 论文章节映射
-
-### 完整证据链
 ```
-[EMD存在] → [提前预测可行] → [SRI能定位窗口] → [定位窗口能改善预测]
-    ↑           ✅                 ✅                    ✅
-  E3间接    exp_anticipation    E1-E6基本覆盖        exp_alignment
-  缺直接       Δt*=250ms                              train进行中
-  ↓
-✅ exp_emd_direct (补充)
+[EMD存在] ──[提前预测可行]──[SRI能定位窗口]──[定位窗口能改善预测]
+    │            │                │                  │
+   E3间接    ✅ exp二          ✅ E1-E6基本覆盖   ✅ exp四
+   缺直接     Δt*=250ms                              individual≈fixed
+    ↓
+✅ exp一(补充)     ✅ E5增强(Rf=1.61)      ✅ exp六(泛化鲁棒性)
 ```
 
-### 核心Claim
+### 核心Claim（论文）
 1. ST-SRI能稳定定位个体化EMD窗口（E3，56.4%，55.6ms）
-2. 该窗口对提前预测模型决策具有显著faithfulness（E5，p<0.001，d=0.625）
-3. 将该窗口用于自适应对齐后，性能与固定补偿相当（实验四）
-4. EMD直接量化补充验证（实验一，86.9ms）
+2. EMD窗口对预测决策有显著faithfulness（E5，p<0.001，d=0.625）
+3. 自适应对齐与固定补偿效果相当（实验四）
+4. EMD直接量化补充验证（实验一）
 5. 模型具有噪声鲁棒性和跨受试者泛化能力（实验六）
 
 ---
@@ -179,6 +152,7 @@ HIDDEN_SIZE = 256            # LSTM隐藏层
 NUM_LAYERS = 3               # LSTM层数
 DROPOUT = 0.3                # Dropout
 NUM_CLASSES = 18             # 17手势 + 1静息
+CHANNELS = 12                # sEMG通道数
 ```
 
 ---
@@ -190,23 +164,24 @@ NUM_CLASSES = 18             # 17手势 + 1静息
 - **动作**: Exercise 1，17手势 + rest
 - **通道**: 12通道 sEMG
 - **采样率**: 2000 Hz
-- **E2数据**: 含手套force信号，可做EMD直接验证
+
+**E2数据** (含force): 用于EMD直接量化验证
 
 ---
 
 ## 📞 问题排查
 
-### 问题1: CUDA OOM
+### CUDA OOM
 ```python
-# 在代码中修改
+# 修改 common.py
 DEVICE = torch.device("cpu")
 ```
 
-### 问题2: 训练太慢
+### 训练时间过长
 ```python
-# 减少配置
-N_SUBJECTS = 5
-N_REPEATS = 1
+# 修改实验配置
+N_SUBJECTS = 5   # 减少受试者
+N_REPEATS = 1    # 减少重复
 ```
 
 ---
@@ -220,5 +195,5 @@ N_REPEATS = 1
 ---
 
 **最后更新**: 2026-03-29
-**项目状态**: 实验完成，准备投稿
+**项目状态**: 实验完成
 **GitHub**: https://github.com/xiaoyulim/ST-SRI
