@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(rm:*)",
+      "Bash(rmdir experiments_improved:*)",
+      "Bash(pip show:*)",
+      "Bash(where python:*)",
+      "Bash(conda run:*)",
+      "Bash(C:/Users/xiaoyulimit/miniconda3/envs/xai_lab/python.exe:*)",
+      "Bash(tee results/alignment/train_log.txt)",
+      "Bash(conda info:*)",
+      "Read(//home/xiaoyulimit/miniconda3/**)",
+      "Read(//home/xiaoyulimit/anaconda3/**)",
+      "Bash(python3 -c \"import torch; print\\(torch.__version__\\)\")",
+      "Read(//mnt/c/Users/**)",
+      "Read(//mnt/d/**)",
+      "Bash(find /mnt/c/Users/xiaoyulimit/miniconda3/envs/xai_lab -name python* -type f)",
+      "Bash(/mnt/c/Users/xiaoyulimit/miniconda3/envs/xai_lab/python.exe --version 2>&1)",
+      "Bash(/mnt/c/Users/xiaoyulimit/miniconda3/envs/xai_lab/python.exe exp_alignment.py --mode train)",
+      "Bash(/mnt/c/Users/xiaoyulimit/miniconda3/envs/xai_lab/python.exe -c \"import torch; print\\(torch.__version__\\)\" 2>&1)",
+      "Bash(/mnt/c/Users/xiaoyulimit/miniconda3/envs/xai_lab/python.exe e5_enhanced.py)",
+      "Bash(/mnt/c/Users/xiaoyulimit/miniconda3/envs/xai_lab/python.exe -u -c \"print\\('test unbuffered output'\\)\")",
+      "Bash(/mnt/c/Users/xiaoyulimit/miniconda3/envs/xai_lab/python.exe -c \"import torch; print\\('CUDA IS_AVAILABLE:', torch.cuda.is_available\\(\\)\\); print\\('DEVICE COUNT:', torch.cuda.device_count\\(\\)\\)\")",
+      "Bash(nvidia-smi)",
+      "Bash(cmd.exe /c \"nvidia-smi\")",
+      "Bash(/mnt/c/Windows/System32/nvidia-smi.exe)",
+      "Bash(PYTHON=/mnt/c/Users/xiaoyulimit/miniconda3/envs/xai_lab/python.exe)",
+      "Bash($PYTHON e3.py)",
+      "Bash(echo \"E3 完成，退出码: $?\")",
+      "Bash(pkill -f \"python.exe e3.py\")",
+      "Bash(rm -f /mnt/d/ST_SRI_Project/results/e3_analysis/S*.npy /mnt/d/ST_SRI_Project/results/e3_analysis/lags.npy)",
+      "Bash(/mnt/c/Users/xiaoyulimit/miniconda3/envs/xai_lab/python.exe e3.py)"
+    ]
+  }
+}

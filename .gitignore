@@ -1,0 +1,11 @@
+*.pyc
+__pycache__/
+*.pth
+*.npy
+*.mat
+data/
+checkpoints_*/
+results/
+.idea/
+.DS_Store
+*.pdf
