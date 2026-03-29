@@ -16,27 +16,27 @@ ST_SRI_Project/
 │
 ├── experiments/                  # 实验代码
 │   ├── baseline/                 # 基线实验
-│   │   ├── e0.py
-│   │   └── e0_train.py
+│   │   ├── e0.py                 # 基线模型评估
+│   │   └── e0_train.py           # 基线模型训练
 │   │
 │   ├── basic/                    # 基础实验 (E1-E6)
 │   │   ├── e1.py                 # 消融实验
 │   │   ├── e2.py                 # 机理验证
-│   │   ├── e3.py                 # 生理验证
+│   │   ├── e3.py                 # 生理验证 ⭐
 │   │   ├── e4.py                 # 稳定性对比
 │   │   ├── e5.py                 # 忠实度评估
-│   │   ├── e5_enhanced.py        # 忠实度增强
+│   │   ├── e5_enhanced.py        # 忠实度增强 ⭐
 │   │   └── e6.py                 # 敏感性分析
 │   │
 │   └── advanced/                 # 补充实验
 │       ├── exp_emd_direct.py     # 实验一：EMD直接量化
-│       ├── exp_anticipation.py   # 实验二：提前预测
-│       ├── exp_alignment.py      # 实验四：自适应对齐
+│       ├── exp_anticipation.py   # 实验二：提前预测 ⭐
+│       ├── exp_alignment.py      # 实验四：自适应对齐 ⭐
 │       ├── exp_channel_selection_full.py  # 实验五：通道筛选
 │       ├── exp_loso_full.py      # 实验六：LOSO跨受试者
 │       └── exp_generalization.py # 实验六：噪声鲁棒性
 │
-├── common.py                     # 核心模块（模型、数据集、ST-SRI）
+├── common.py                     # 核心模块
 │
 ├── data/                         # NinaPro DB2 数据
 │   ├── S1_data.npy               # E1 (手势) 数据
@@ -82,15 +82,11 @@ ST_SRI_Project/
 
 | 实验 | 目的 | 关键结果 |
 |------|------|----------|
-| 实验一 | EMD直接量化 | 86.9±34.6ms (直接检测) vs 65.3ms (ST-SRI) |
+| 实验一 | EMD直接量化 | 86.9±34.6ms (直接) vs 65.3ms (ST-SRI) |
 | 实验二 | 提前预测 | Δt*=250ms, F1=0.836 |
 | 实验四 | 自适应对齐 | individual≈fixed_55ms (p=0.676) |
-| 实验五 | 通道筛选 | 性能随通道数下降曲线 |
+| 实验五 | 通道筛选 | 12→4通道性能曲线 |
 | 实验六 | 泛化鲁棒性 | 噪声:84%→59%; LOSO:63.5%±1.5% |
-
-### 增强版E5结果
-- **Rf (EMD/Recent)**: 1.61
-- **Rf (EMD/Random)**: 1.096 (p=0.004)
 
 ---
 
@@ -110,11 +106,11 @@ python scripts/01_preproccess.py
 
 ### 3. 运行实验
 ```bash
-# 基线与基础实验
+# 基础实验
 python experiments/basic/e3.py
 python experiments/basic/e5_enhanced.py
 
-# 补充实验
+# 补充实验 (需要较长时间)
 python experiments/advanced/exp_anticipation.py --mode eval
 python experiments/advanced/exp_alignment.py --mode eval
 python experiments/advanced/exp_emd_direct.py
@@ -165,8 +161,6 @@ CHANNELS = 12                # sEMG通道数
 - **通道**: 12通道 sEMG
 - **采样率**: 2000 Hz
 
-**E2数据** (含force): 用于EMD直接量化验证
-
 ---
 
 ## 📞 问题排查
@@ -176,21 +170,6 @@ CHANNELS = 12                # sEMG通道数
 # 修改 common.py
 DEVICE = torch.device("cpu")
 ```
-
-### 训练时间过长
-```python
-# 修改实验配置
-N_SUBJECTS = 5   # 减少受试者
-N_REPEATS = 1    # 减少重复
-```
-
----
-
-## 📖 参考文献
-
-- Cavanagh & Komi (1979). Electromechanical delay in human skeletal muscle.
-- Atzori et al. (2014). NinaPro DB2. Scientific Data.
-- Lundberg & Lee (2017). SHAP. NeurIPS.
 
 ---
 
