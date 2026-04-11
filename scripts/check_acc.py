@@ -1,11 +1,13 @@
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import torch
 import os
 import numpy as np
 import json
 import pandas as pd
 import matplotlib.pyplot as plt
-from torch.utils.data import DataLoader, random_split
-from common import NinaProDataset, LSTMModel, DEVICE
+from torch.utils.data import DataLoader
+from common import NinaProDataset, LSTMModel, DEVICE, create_blocked_split
 
 # 修复 OMP 报错 (防止在某些环境下绘图崩溃)
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -16,7 +18,7 @@ CHECKPOINT_DIR = "./checkpoints_2000hz"
 RESULT_DIR = "./results/model_evaluation"  # 图片保存路径
 TARGET_FS = 2000
 WINDOW_MS = 300
-STEP_MS = 100
+STEP_MS = 50  # 与 e0_train.py 和 checkpoints_2000hz 保持一致
 NUM_CLASSES = 18
 ACC_THRESHOLD = 75.0  # 达标阈值
 # =======================================
@@ -33,10 +35,8 @@ def evaluate_saved_model(sub_id):
     except:
         return None
 
-    # 还原划分
-    train_len = int(0.8 * len(ds))
-    val_len = len(ds) - train_len
-    _, val_ds = random_split(ds, [train_len, val_len])
+    # 无泄漏划分：使用连续时间块划分替代 random_split
+    _, val_ds = create_blocked_split(ds, train_ratio=0.8)
 
     # 稍微增大 batch_size 加速评估
     val_loader = DataLoader(val_ds, batch_size=128, shuffle=False)

@@ -1,11 +1,13 @@
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 # 文件名: 02_train_factory.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 import os
 import time
-from common import NinaProDataset, LSTMModel, DEVICE
+from common import NinaProDataset, LSTMModel, DEVICE, create_blocked_split
 
 # === 训练配置 ===
 DATA_ROOT = "./data"
@@ -38,10 +40,8 @@ def train_one_subject(sub_id):
         print(f"  [Error] S{sub_id} 数据文件缺失，请先运行 01_preprocess.py")
         return
 
-    # 划分 80% / 20%
-    train_len = int(0.8 * len(ds))
-    val_len = len(ds) - train_len
-    train_ds, val_ds = random_split(ds, [train_len, val_len])
+    # 无泄漏划分 80% / 20%（连续时间块 + gap）
+    train_ds, val_ds = create_blocked_split(ds, train_ratio=0.8)
 
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)

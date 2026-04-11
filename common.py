@@ -1,11 +1,13 @@
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 import numpy as np
 import os
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 FS = 2000
+EMD_VALID_MIN_MS = 30
+EMD_VALID_MAX_MS = 100
 
 
 class NinaProDataset(Dataset):
@@ -141,6 +143,118 @@ class ST_SRI_Interpreter:
         lags_ms = [l * (1000 / FS) for l in lags]
 
         return lags_ms, synergy, redundancy
+
+
+# ================= 无泄漏数据划分工具 =================
+
+def blocked_time_split(dataset, train_ratio=0.8, gap_ratio=1.0, window_len=None, stride=None):
+    """
+    基于连续时间块的无泄漏划分，避免重叠窗口被分到不同集合。
+    
+    原则：
+    - 训练集取前 train_ratio 比例的连续时间
+    - 测试/验证集取后 (1-train_ratio) 比例的连续时间
+    - 在两者之间预留 gap，gap 大小为 window_len - stride，确保没有共享原始采样点
+    
+    参数:
+        dataset: NinaProDataset 对象，需包含 .stride 和 .window_len 属性
+        train_ratio: 训练集比例
+        gap_ratio: gap 倍数，默认 1.0 即预留 (window_len - stride)
+        window_len: 如果 dataset 没有该属性，手动传入
+        stride: 如果 dataset 没有该属性，手动传入
+    
+    返回:
+        (train_indices, val_indices): 索引列表，可用于 Subset
+    """
+    total_samples = len(dataset)
+    
+    # 获取窗口参数
+    wl = window_len if window_len is not None else getattr(dataset, 'window_len', 600)
+    st = stride if stride is not None else getattr(dataset, 'stride', 100)
+    
+    # gap 样本数（窗口级）：需要预留一个 window_len - stride 长度的间隔，约等于 1 个窗口
+    gap_samples = int((wl - st) / st * gap_ratio)
+    gap_samples = max(1, gap_samples)
+    
+    train_end = int(total_samples * train_ratio) - gap_samples // 2
+    val_start = int(total_samples * train_ratio) + (gap_samples - gap_samples // 2)
+    
+    if val_start >= total_samples:
+        # 样本太少，退化成无 gap 划分
+        train_end = int(total_samples * train_ratio)
+        val_start = train_end
+    
+    train_indices = list(range(0, train_end))
+    val_indices = list(range(val_start, total_samples))
+
+    # 防御性检查：确保 train/val 之间存在正向 gap（原始采样点不重叠）
+    if train_indices and val_indices:
+        gap_raw = val_start * st - (train_end - 1) * st - wl
+        assert gap_raw >= 0, (
+            f"blocked_time_split leak: gap_raw={gap_raw} < 0 "
+            f"(train_end={train_end}, val_start={val_start}, wl={wl}, st={st})"
+        )
+
+    return train_indices, val_indices
+
+
+def create_blocked_split(dataset, train_ratio=0.8, gap_ratio=1.0, window_len=None, stride=None):
+    """
+    创建 blocked split 的 Subset 对象，直接替代 random_split。
+
+    返回:
+        (train_dataset, val_dataset): Subset 对象
+    """
+    train_idx, val_idx = blocked_time_split(dataset, train_ratio, gap_ratio, window_len, stride)
+    return Subset(dataset, train_idx), Subset(dataset, val_idx)
+
+
+def describe_blocked_split(dataset, train_ratio=0.8, gap_ratio=1.0, window_len=None, stride=None):
+    """
+    返回 blocked split 的索引与原始采样点范围，便于打印和验证无泄漏。
+    """
+    train_idx, val_idx = blocked_time_split(dataset, train_ratio, gap_ratio, window_len, stride)
+    wl = window_len if window_len is not None else getattr(dataset, 'window_len', 600)
+    st = stride if stride is not None else getattr(dataset, 'stride', 100)
+
+    def to_span(indices):
+        if not indices:
+            return None
+        start_window = indices[0]
+        end_window = indices[-1]
+        raw_start = start_window * st
+        raw_end = end_window * st + wl - 1
+        return {
+            "window_range": [int(start_window), int(end_window)],
+            "raw_range": [int(raw_start), int(raw_end)],
+        }
+
+    return {
+        "train": to_span(train_idx),
+        "val": to_span(val_idx),
+        "gap_windows": int(max(0, (val_idx[0] - train_idx[-1] - 1) if train_idx and val_idx else 0)),
+        "gap_raw_samples": int(max(0, (val_idx[0] * st) - (train_idx[-1] * st + wl)) if train_idx and val_idx else 0),
+    }
+
+
+def multi_subject_blocked_split(subject_datasets, train_ratio=0.8):
+    """
+    多受试者数据集的无泄漏划分：对每个受试者独立做 blocked split 然后合并。
+    
+    参数:
+        subject_datasets: 每个元素是单个受试者的 Dataset 对象
+    
+    返回:
+        (train_dataset, val_dataset): 合并后的 Subset 列表合并
+    """
+    from torch.utils.data import ConcatDataset
+    train_parts = []
+    val_parts = []
+    for ds in subject_datasets:
+        tr, val = create_blocked_split(ds, train_ratio)
+        train_parts.append(tr)
+        val_parts.append(val)
+    return ConcatDataset(train_parts), ConcatDataset(val_parts)
 
 
 # ================= 统计工具函数 (从 experiments_improved 提取) =================
