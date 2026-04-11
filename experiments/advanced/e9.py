@@ -20,21 +20,22 @@
   results/alignment/alignment_stats_{mode}.json      统计检验（配对 t 检验 + Cohen's d）
 """
 
-import os
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 import json
 import argparse
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 from scipy import stats
 from sklearn.metrics import f1_score
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
 
-from common import NinaProDataset, LSTMModel, DEVICE, calculate_cohens_d, interpret_cohens_d, bootstrap_ci
+from common import NinaProDataset, LSTMModel, DEVICE, calculate_cohens_d, interpret_cohens_d, bootstrap_ci, create_blocked_split, EMD_VALID_MIN_MS, EMD_VALID_MAX_MS
 
 # ============================= 配置 =============================
 DATA_ROOT = "./data"
@@ -44,8 +45,9 @@ GOOD_SUBJECTS_PATH = "./good_subjects.json"
 PEAKS_PATH = "./subject_peaks_e3.json"
 
 # 生理有效范围：仅将该范围内的峰值纳入 individual 策略
-EMD_LOW_MS = 30
-EMD_HIGH_MS = 100
+# (uses common global constants for consistency with E3/E5)
+EMD_LOW_MS = EMD_VALID_MIN_MS
+EMD_HIGH_MS = EMD_VALID_MAX_MS
 
 # 训练模式配置（仅 --mode train 使用）
 TRAIN_EPOCHS = 40          # --fast 时覆盖为 20
@@ -107,10 +109,7 @@ def build_dataset(sub_id, anticipation_ms):
 
 
 def split_dataset(ds, train_ratio=0.8, batch_size=64):
-    train_len = int(train_ratio * len(ds))
-    val_len = len(ds) - train_len
-    train_ds, val_ds = random_split(ds, [train_len, val_len],
-                                    generator=torch.Generator().manual_seed(42))
+    train_ds, val_ds = create_blocked_split(ds, train_ratio)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
     return train_loader, val_loader

@@ -1,238 +1,218 @@
 """
-实验六：LOSO跨受试者泛化 - 完整版
+实验六：LOSO跨受试者泛化 - 修正版
 =================================
-Leave-One-Subject-Out: 训练N-1个受试者，测试剩下的1个
+真正的 Leave-One-Subject-Out：
+- held-out subject 只用于测试
+- 训练侧每个 subject 独立滑窗，再做 blocked split 取 train/val
+- 不再拼接原始序列，避免跨受试者边界窗口
 """
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 import os
 import json
+import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, random_split
-from sklearn.metrics import f1_score
+from torch.utils.data import DataLoader, ConcatDataset
+from sklearn.metrics import accuracy_score, f1_score
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
 
+from common import (
+    NinaProDataset,
+    LSTMModel,
+    DEVICE,
+    create_blocked_split,
+    describe_blocked_split,
+)
+
 DATA_ROOT = "./data"
 RESULT_DIR = "./results/loso"
 GOOD_SUBJECTS_PATH = "./good_subjects.json"
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-FS = 2000
 
-# 完整训练配置
-N_SUBJECTS = 10  # 参与LOSO的受试者数
 TRAIN_EPOCHS = 40
-TRAIN_PATIENCE = 20
+TRAIN_PATIENCE = 12
 TRAIN_BATCH = 64
-TRAIN_LR = 0.001
+TRAIN_LR = 1e-3
 
 os.makedirs(RESULT_DIR, exist_ok=True)
 
-class LSTMModel(nn.Module):
-    def __init__(self, input_size=12, hidden_size=256, num_layers=3, dropout=0.3):
-        super().__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout)
-        self.fc = nn.Linear(hidden_size, 18)
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :])
 
-class NinaProDataset(torch.utils.data.Dataset):
-    def __init__(self, root_dir, subject_ids, window_ms=300, step_ms=50):
-        self.fs = FS
-        self.window_len = int(window_ms * self.fs / 1000)
-        self.stride = int(step_ms * self.fs / 1000)
-        
-        all_data = []
-        all_labels = []
-        
-        for sub_id in subject_ids:
-            data = np.load(os.path.join(root_dir, f"S{sub_id}_data.npy"))
-            labels = np.load(os.path.join(root_dir, f"S{sub_id}_label.npy"))
-            data = (data - np.mean(data, axis=0)) / (np.std(data, axis=0) + 1e-6)
-            all_data.append(data)
-            all_labels.append(labels)
-        
-        self.data = np.vstack(all_data)
-        self.labels = np.concatenate(all_labels)
-        
-        # 标签重映射确保连续
-        unique_labels = sorted(set(self.labels))
-        label_map = {old: new for new, old in enumerate(unique_labels)}
-        self.labels = np.array([label_map[l] for l in self.labels])
-        
-        self.num_classes = len(unique_labels)
-        self.num_samples = (len(self.data) - self.window_len) // self.stride + 1
+def load_subjects(limit=None):
+    with open(GOOD_SUBJECTS_PATH, "r") as f:
+        subjects = json.load(f)
+    return subjects[:limit] if limit is not None else subjects
 
-    def __len__(self):
-        return min(self.num_samples, 500)
 
-    def __getitem__(self, idx):
-        start = idx * self.stride
-        end = start + self.window_len
-        x = torch.from_numpy(self.data[start:end, :]).float()
-        label_chunk = self.labels[start:end]
-        y = int(np.bincount(label_chunk).argmax()) if len(label_chunk) > 0 else 0
-        return x, torch.tensor(y)
+def evaluate_model(model, loader):
+    model.eval()
+    all_true, all_pred = [], []
+    with torch.no_grad():
+        for x, y in loader:
+            x = x.to(DEVICE)
+            y = y.to(DEVICE).long()
+            pred = model(x).argmax(1)
+            all_true.extend(y.cpu().numpy())
+            all_pred.extend(pred.cpu().numpy())
+    if not all_true:
+        return {"acc": 0.0, "f1": 0.0}
+    return {
+        "acc": float(accuracy_score(all_true, all_pred)),
+        "f1": float(f1_score(all_true, all_pred, average="macro", zero_division=0)),
+    }
 
-class NoisyDataset(torch.utils.data.Dataset):
-    def __init__(self, original_ds, noise_std=0):
-        self.ds = original_ds
-        self.noise_std = noise_std
-    def __len__(self):
-        return len(self.ds)
-    def __getitem__(self, idx):
-        x, y = self.ds[idx]
-        if self.noise_std > 0:
-            x = x + torch.randn_like(x) * self.noise_std
-        return x, y
 
-def split_dataset(ds, train_ratio=0.8):
-    train_len = int(train_ratio * len(ds))
-    val_len = len(ds) - train_len
-    train_ds, val_ds = random_split(ds, [train_len, val_len], generator=torch.Generator().manual_seed(42))
-    train_loader = DataLoader(train_ds, batch_size=TRAIN_BATCH, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=TRAIN_BATCH, shuffle=False)
-    return train_loader, val_loader
+def build_fold_datasets(train_subjects, test_subject, batch_size=TRAIN_BATCH):
+    train_parts = []
+    val_parts = []
+    split_report = {}
 
-def train_and_eval(train_ds, val_ds, epochs=TRAIN_EPOCHS):
-    train_loader, val_loader = split_dataset(train_ds)
-    
+    for sub_id in train_subjects:
+        ds = NinaProDataset(DATA_ROOT, sub_id, window_ms=300, target_fs=2000, step_ms=50)
+        tr, val = create_blocked_split(ds, train_ratio=0.8)
+        train_parts.append(tr)
+        val_parts.append(val)
+        split_report[str(sub_id)] = describe_blocked_split(ds, train_ratio=0.8)
+
+    test_ds = NinaProDataset(DATA_ROOT, test_subject, window_ms=300, target_fs=2000, step_ms=50)
+    split_report[str(test_subject)] = {
+        "test": {
+            "window_range": [0, len(test_ds) - 1],
+            "raw_range": [0, len(test_ds.data) - 1],
+        }
+    }
+
+    train_ds = ConcatDataset(train_parts)
+    val_ds = ConcatDataset(val_parts)
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+    return train_loader, val_loader, test_loader, split_report
+
+
+def train_one_fold(train_loader, val_loader, epochs=TRAIN_EPOCHS):
     model = LSTMModel(input_size=12).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=TRAIN_LR)
     criterion = nn.CrossEntropyLoss()
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5)
-    
-    best_acc = 0
+
+    best_state = None
+    best_val_acc = -1.0
     patience = 0
-    
+
     for epoch in range(epochs):
         model.train()
         for x, y in train_loader:
-            x, y = x.to(DEVICE), y.to(DEVICE).long()
-            out = model(x)
-            loss = criterion(out, y)
+            x = x.to(DEVICE)
+            y = y.to(DEVICE).long()
+            optimizer.zero_grad()
+            loss = criterion(model(x), y)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-        
-        model.eval()
-        correct, total = 0, 0
-        with torch.no_grad():
-            for x, y in val_loader:
-                x, y = x.to(DEVICE), y.to(DEVICE).long()
-                pred = model(x).argmax(1)
-                correct += (pred == y).sum().item()
-                total += y.size(0)
-        
-        acc = correct / total if total > 0 else 0
-        
-        if acc > best_acc:
-            best_acc = acc
+
+        metrics = evaluate_model(model, val_loader)
+        val_acc = metrics["acc"]
+        print(f"    epoch {epoch + 1:02d}: val_acc={val_acc:.4f}, val_f1={metrics['f1']:.4f}")
+
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             patience = 0
         else:
             patience += 1
-        
-        if patience >= TRAIN_PATIENCE:
-            break
-    
-    return best_acc
+            if patience >= TRAIN_PATIENCE:
+                break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    return model
+
 
 def loso_experiment(subjects):
-    print("\n=== LOSO 跨受试者泛化实验 ===")
-    print(f"受试者: {subjects}")
-    print(f"每个测试样本: 在其余 {len(subjects)-1} 个受试者上训练")
-    
+    print("\n=== LOSO 跨受试者泛化实验（修正版）===")
     results = {}
-    
-    for test_idx, test_sub in enumerate(subjects):
-        print(f"\n>>> 测试受试者: S{test_sub} ({test_idx+1}/{len(subjects)})")
-        
-        # 训练集：除测试外的所有受试者
-        train_subs = [s for s in subjects if s != test_sub]
-        
-        # 验证集
-        val_subs = [test_sub]
-        
-        print(f"    训练受试者: {train_subs}")
-        
-        # 构建数据加载器
-        train_ds = NinaProDataset(DATA_ROOT, train_subs)
-        val_ds = NinaProDataset(DATA_ROOT, val_subs)
-        
-        print(f"    训练样本: {len(train_ds)}, 测试样本: {len(val_ds)}")
-        
-        # 训练并评估
-        acc = train_and_eval(train_ds, val_ds)
-        
-        results[test_sub] = acc
-        print(f"    S{test_sub}: Acc={acc:.3f}")
-    
-    return results
+    split_reports = {}
 
-def main():
-    with open(GOOD_SUBJECTS_PATH) as f:
-        all_subjects = json.load(f)
-    
-    subjects = all_subjects[:N_SUBJECTS]
-    
-    print("=" * 60)
-    print("LOSO 跨受试者泛化实验（完整版）")
-    print("=" * 60)
-    print(f"测试受试者数: {len(subjects)}")
-    print(f"每个模型训练轮数: {TRAIN_EPOCHS}")
-    print("=" * 60)
-    
-    results = loso_experiment(subjects)
-    
-    # 汇总
-    accs = list(results.values())
-    mean_acc = np.mean(accs)
-    std_acc = np.std(accs)
-    
-    print("\n" + "=" * 60)
-    print("LOSO 结果汇总")
-    print("=" * 60)
-    print(f"平均准确率: {mean_acc:.3f} ± {std_acc:.3f}")
-    print(f"最高准确率: {max(accs):.3f}")
-    print(f"最低准确率: {min(accs):.3f}")
-    
-    # 保存
-    with open(os.path.join(RESULT_DIR, "loso_results.json"), 'w') as f:
-        json.dump({
-            "results": results,
-            "summary": {
-                "mean_accuracy": float(mean_acc),
-                "std_accuracy": float(std_acc),
-                "n_subjects": len(subjects)
-            }
-        }, f, indent=2)
-    
-    # 绘图
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
+    for fold_idx, test_sub in enumerate(subjects, start=1):
+        train_subjects = [s for s in subjects if s != test_sub]
+        print(f"\n>>> Fold {fold_idx}/{len(subjects)} | held-out S{test_sub}")
+        print(f"    train subjects: {train_subjects}")
+
+        train_loader, val_loader, test_loader, split_report = build_fold_datasets(train_subjects, test_sub)
+        split_reports[str(test_sub)] = split_report
+
+        print(f"    train batches={len(train_loader)}, val batches={len(val_loader)}, test batches={len(test_loader)}")
+        model = train_one_fold(train_loader, val_loader)
+        test_metrics = evaluate_model(model, test_loader)
+        results[str(test_sub)] = test_metrics
+        print(f"    test S{test_sub}: acc={test_metrics['acc']:.4f}, f1={test_metrics['f1']:.4f}")
+
+    return results, split_reports
+
+
+def save_outputs(results, split_reports):
+    accs = np.array([v["acc"] for v in results.values()])
+    f1s = np.array([v["f1"] for v in results.values()])
+    summary = {
+        "mean_accuracy": float(np.mean(accs)),
+        "std_accuracy": float(np.std(accs)),
+        "mean_f1": float(np.mean(f1s)),
+        "std_f1": float(np.std(f1s)),
+        "n_subjects": len(results),
+    }
+
+    payload = {
+        "results": results,
+        "summary": summary,
+        "split_reports": split_reports,
+    }
+
+    with open(os.path.join(RESULT_DIR, "loso_results.json"), "w") as f:
+        json.dump(payload, f, indent=2)
+
     sub_ids = list(results.keys())
-    accs = list(results.values())
-    
-    bars = ax.bar(range(len(sub_ids)), accs, color='#2196F3', alpha=0.7)
-    ax.axhline(mean_acc, color='red', linestyle='--', linewidth=2, label=f'Mean={mean_acc:.3f}')
-    ax.fill_between([-0.5, len(sub_ids)-0.5], mean_acc-std_acc, mean_acc+std_acc, alpha=0.2, color='red')
-    
-    ax.set_xlabel('Test Subject', fontsize=12)
-    ax.set_ylabel('Accuracy', fontsize=12)
-    ax.set_title('LOSO: Leave-One-Subject-Out Cross-Validation', fontsize=14)
-    ax.set_xticks(range(len(sub_ids)))
-    ax.set_xticklabels([f'S{s}' for s in sub_ids])
-    ax.set_ylim(0, 1.05)
-    ax.legend(fontsize=11)
-    ax.grid(axis='y', alpha=0.3)
-    
-    for i, (s, a) in enumerate(zip(sub_ids, accs)):
-        ax.text(i, a + 0.02, f'{a:.2f}', ha='center', fontsize=9)
-    
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    axes[0].bar(range(len(sub_ids)), [results[s]["acc"] for s in sub_ids], color="#2196F3", alpha=0.8)
+    axes[0].axhline(summary["mean_accuracy"], color="red", linestyle="--", label=f"mean={summary['mean_accuracy']:.3f}")
+    axes[0].set_title("LOSO Accuracy")
+    axes[0].set_xticks(range(len(sub_ids)))
+    axes[0].set_xticklabels([f"S{s}" for s in sub_ids], rotation=45)
+    axes[0].set_ylim(0, 1)
+    axes[0].legend()
+
+    axes[1].bar(range(len(sub_ids)), [results[s]["f1"] for s in sub_ids], color="#4CAF50", alpha=0.8)
+    axes[1].axhline(summary["mean_f1"], color="red", linestyle="--", label=f"mean={summary['mean_f1']:.3f}")
+    axes[1].set_title("LOSO Macro-F1")
+    axes[1].set_xticks(range(len(sub_ids)))
+    axes[1].set_xticklabels([f"S{s}" for s in sub_ids], rotation=45)
+    axes[1].set_ylim(0, 1)
+    axes[1].legend()
+
     plt.tight_layout()
     plt.savefig(os.path.join(RESULT_DIR, "loso_results.png"), dpi=300)
-    print(f"\n图像已保存至 {RESULT_DIR}/loso_results.png")
+    plt.close()
+
+    return summary
+
+
+def main():
+    parser = argparse.ArgumentParser(description="LOSO cross-subject experiment")
+    parser.add_argument("--subjects", type=int, nargs="+", default=None)
+    parser.add_argument("--limit", type=int, default=None, help="仅运行前 N 个 good subjects")
+    args = parser.parse_args()
+
+    subjects = args.subjects if args.subjects else load_subjects(limit=args.limit)
+    print(f"LOSO subjects: {subjects}")
+    results, split_reports = loso_experiment(subjects)
+    summary = save_outputs(results, split_reports)
+
+    print("\n=== LOSO summary ===")
+    print(json.dumps(summary, indent=2))
+
 
 if __name__ == "__main__":
     main()

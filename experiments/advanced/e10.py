@@ -1,3 +1,5 @@
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 """
 实验五：通道筛选 - 完整训练
 ============================
@@ -9,7 +11,7 @@ import json
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 from sklearn.metrics import f1_score
 import matplotlib.pyplot as plt
 import matplotlib
@@ -99,9 +101,8 @@ def build_dataset(subject_id, channel_indices=None):
 
 
 def split_dataset(ds, train_ratio=TRAIN_RATIO, batch_size=TRAIN_BATCH):
-    train_len = int(train_ratio * len(ds))
-    val_len = len(ds) - train_len
-    train_ds, val_ds = random_split(ds, [train_len, val_len], generator=torch.Generator().manual_seed(42))
+    from common import create_blocked_split
+    train_ds, val_ds = create_blocked_split(ds, train_ratio)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
     return train_loader, val_loader

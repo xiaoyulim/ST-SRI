@@ -13,6 +13,8 @@
   results/anticipation/delta_t_star.json            最早稳定提前量 Δt*
 """
 
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 import os
 import json
 import argparse
@@ -20,13 +22,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 from sklearn.metrics import f1_score
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
 
-from common import NinaProDataset, LSTMModel, DEVICE
+from common import NinaProDataset, LSTMModel, DEVICE, create_blocked_split
 
 # ============================= 配置 =============================
 DATA_ROOT = "./data"
@@ -75,9 +77,7 @@ def build_dataset(sub_id, anticipation_ms):
 
 
 def split_dataset(ds, train_ratio=0.8, batch_size=64):
-    train_len = int(train_ratio * len(ds))
-    val_len = len(ds) - train_len
-    train_ds, val_ds = random_split(ds, [train_len, val_len])
+    train_ds, val_ds = create_blocked_split(ds, train_ratio)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
     return train_loader, val_loader
