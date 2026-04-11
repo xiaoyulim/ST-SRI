@@ -1,3 +1,16 @@
+"""
+基线实验（E0）：SHAP 基线评估
+===============================
+目标：使用标准 SHAP（GradientExplainer）对已训练的 LSTM 模型
+      生成基线归因结果，作为 ST-SRI 的对比基准。
+
+方法：
+  - 对每个受试者的模型运行 SHAP 归因
+  - 生成时间维归因热力图
+
+输出：
+  - 每个受试者的 SHAP 归因结果图
+"""
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 

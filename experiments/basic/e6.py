@@ -1,12 +1,18 @@
+"""
+实验六（E6）：敏感性分析 — block_size 粒度影响
+================================================
+目标：验证 ST-SRI 的结果对遮挡粒度（block_size）的鲁棒性。
+
+方法：
+  - 分别以 block_size = 1, 2, 5 运行 ST-SRI 扫描
+  - 比较不同粒度下的协同峰位置和曲线形状
+
+评价指标：
+  - 不同 block_size 下峰值位置的一致性
+  - 协同谱形状相关系数
+"""
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
-
-import os
-
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
+sys.path.insert(0, os.path.join(os.path.dirname(__file__),  "../.."))
 import json
 from scipy.ndimage import gaussian_filter1d
 from torch.utils.data import DataLoader

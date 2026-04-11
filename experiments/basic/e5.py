@@ -1,3 +1,17 @@
+"""
+实验五（E5）：忠实度评估 — EMD 窗口遮挡实验
+=============================================
+目标：验证 ST-SRI 定位的 EMD 窗口对模型决策的实际重要性。
+
+方法：
+  - 遮挡 ST-SRI 检测到的 EMD 窗口，测量准确率下降
+  - 遮挡近期窗口（0-20ms）作为对照
+  - 计算 Faithfulness Ratio (Rf) = Δacc_EMD / Δacc_recent
+
+评价指标：
+  - Faithfulness Ratio (Rf > 1 表示 EMD 窗口更关键)
+  - Paired t-test, Cohen's d, Wilcoxon 检验
+"""
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 import torch

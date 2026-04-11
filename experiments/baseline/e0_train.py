@@ -1,3 +1,15 @@
+"""
+基线训练（E0-Train）：Per-Subject LSTM 模型训练
+=================================================
+目标：为每个受试者训练独立的 LSTM 分类模型，作为后续所有实验的基础。
+
+模型：3 层 LSTM（hidden=256, dropout=0.3, 18 类）
+数据：NinaPro DB2, 300ms 窗口, stride=50ms, 2000Hz
+划分：80/20 blocked split（无泄漏）
+训练：Adam, lr=1e-3, 早停 patience=25, 最多 40 epochs
+
+输出：./checkpoints_2000hz/best_model_S{1-40}.pth
+"""
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 # 文件名: 02_train_factory.py
