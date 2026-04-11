@@ -1,5 +1,7 @@
+import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import Dataset, Subset
 import numpy as np
 import os
@@ -53,6 +55,132 @@ class LSTMModel(nn.Module):
     def forward(self, x):
         out, _ = self.lstm(x)
         return self.fc(out[:, -1, :])
+
+
+# ================= 2b. TCN 模型 =================
+
+class _CausalConv1d(nn.Module):
+    """因果卷积：只看过去，不看未来。"""
+    def __init__(self, in_ch, out_ch, kernel_size, dilation=1):
+        super().__init__()
+        self.padding = (kernel_size - 1) * dilation
+        self.conv = nn.Conv1d(in_ch, out_ch, kernel_size,
+                              padding=self.padding, dilation=dilation)
+
+    def forward(self, x):
+        out = self.conv(x)
+        if self.padding > 0:
+            out = out[:, :, :-self.padding]
+        return out
+
+
+class _TCNBlock(nn.Module):
+    """TCN 残差块：2 层因果卷积 + 残差连接。"""
+    def __init__(self, in_ch, out_ch, kernel_size, dilation, dropout):
+        super().__init__()
+        self.net = nn.Sequential(
+            _CausalConv1d(in_ch, out_ch, kernel_size, dilation),
+            nn.BatchNorm1d(out_ch),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            _CausalConv1d(out_ch, out_ch, kernel_size, dilation),
+            nn.BatchNorm1d(out_ch),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
+        self.downsample = nn.Conv1d(in_ch, out_ch, 1) if in_ch != out_ch else nn.Identity()
+
+    def forward(self, x):
+        return F.relu(self.net(x) + self.downsample(x))
+
+
+class TCNModel(nn.Module):
+    """
+    Temporal Convolutional Network.
+    输入: (B, T, C)  输出: (B, num_classes)
+    3 层 TCN，指数递增 dilation，取最后时间步做分类。
+    """
+    def __init__(self, input_size=12, hidden_size=256, num_layers=3,
+                 num_classes=18, kernel_size=7, dropout=0.3):
+        super().__init__()
+        channels = [hidden_size] * num_layers
+        layers = []
+        in_ch = input_size
+        for i, out_ch in enumerate(channels):
+            dilation = 2 ** i
+            layers.append(_TCNBlock(in_ch, out_ch, kernel_size, dilation, dropout))
+            in_ch = out_ch
+        self.network = nn.Sequential(*layers)
+        self.fc = nn.Linear(channels[-1], num_classes)
+
+    def forward(self, x):
+        # x: (B, T, C) → (B, C, T) for Conv1d
+        out = self.network(x.transpose(1, 2))
+        # 取最后时间步
+        return self.fc(out[:, :, -1])
+
+
+# ================= 2c. Transformer 模型 =================
+
+class _PositionalEncoding(nn.Module):
+    """标准正弦位置编码。"""
+    def __init__(self, d_model, max_len=2000, dropout=0.1):
+        super().__init__()
+        self.dropout = nn.Dropout(dropout)
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1).float()
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe.unsqueeze(0))  # (1, max_len, d_model)
+
+    def forward(self, x):
+        x = x + self.pe[:, :x.size(1), :]
+        return self.dropout(x)
+
+
+class TransformerModel(nn.Module):
+    """
+    Transformer Encoder for time-series classification.
+    输入: (B, T, C)  输出: (B, num_classes)
+    先用线性层把 C 维投影到 d_model，再过 Transformer Encoder，
+    取最后时间步（或 CLS token）做分类。
+    """
+    def __init__(self, input_size=12, d_model=128, nhead=8, num_layers=4,
+                 num_classes=18, dim_feedforward=256, dropout=0.3):
+        super().__init__()
+        self.input_proj = nn.Linear(input_size, d_model)
+        self.pos_encoder = _PositionalEncoding(d_model, max_len=2000, dropout=dropout)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead,
+            dim_feedforward=dim_feedforward, dropout=dropout,
+            batch_first=True, activation='gelu'
+        )
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.fc = nn.Linear(d_model, num_classes)
+
+    def forward(self, x):
+        # x: (B, T, C)
+        x = self.input_proj(x)         # (B, T, d_model)
+        x = self.pos_encoder(x)        # (B, T, d_model)
+        x = self.transformer_encoder(x)  # (B, T, d_model)
+        return self.fc(x[:, -1, :])    # 取最后时间步
+
+
+# ================= 模型注册表 =================
+
+MODEL_REGISTRY = {
+    'lstm': LSTMModel,
+    'tcn': TCNModel,
+    'transformer': TransformerModel,
+}
+
+
+def build_model(arch='lstm', input_size=12, num_classes=18, **kwargs):
+    """统一的模型构建接口。"""
+    if arch not in MODEL_REGISTRY:
+        raise ValueError(f"Unknown architecture: {arch}. Choose from {list(MODEL_REGISTRY.keys())}")
+    return MODEL_REGISTRY[arch](input_size=input_size, num_classes=num_classes, **kwargs)
 
 
 # ================= 3. ST-SRI 解释器 (Interpreter) =================
