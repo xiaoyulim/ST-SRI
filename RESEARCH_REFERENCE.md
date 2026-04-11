@@ -1,249 +1,297 @@
-# ST-SRI 研究参考文档
+# ST-SRI 实验优化计划（基于审稿意见 + 改进建议）
 
-> 课题：面向 EMD 时序错位的可解释早期 sEMG 运动意图识别与自适应对齐
-> 最后更新：2026-03-24
+> 最后更新：2026-04-11
+> 状态：IJCAI 审稿后修订 / TNNLS 投稿准备
 
 ---
 
-## 一、项目现状总览
+## 一、审计总结
 
-### 数据与模型
+基于三位 IJCAI 审稿人（PC#1/PC#2/PC#3）的意见与"改进建议.pdf"交叉对比，
+将仍需改进的实验工作按优先级排列如下。
 
-| 项目 | 参数 |
+### 已完成项（无需再改）
+
+| 项目 | 证据 |
 |------|------|
-| 数据集 | NinaPro DB2（40 受试者，12 通道 sEMG，2000 Hz） |
-| 任务 | 17 手势 + 静息，共 18 类 |
-| 模型 | 3 层 LSTM（256 hidden，dropout=0.3） |
-| 窗口 | 300 ms，stride=50 ms |
-| 训练 | 80/20 划分，early stopping（patience=25） |
-| 已训练模型 | `checkpoints_2000hz/best_model_S{1-40}.pth` |
-
-### 已有实验与核心结论
-
-| 实验 | 文件 | 核心结论 |
-|------|------|---------|
-| E1 消融（向量级 vs 元素级遮挡） | `e1.py` | 向量级遮挡更平滑，标准差更低 |
-| E2 机理验证（合成 50 ms 注入） | `e2.py` | ST-SRI 可精确恢复注入延迟 |
-| E3 生理验证（EMD 检测） | `e3.py` | 56.4%（22/39）受试者峰值落入 30–100 ms |
-| E4 稳定性对比（ST-SRI vs SHAP） | `e4.py` | ST-SRI 跨样本峰值方差更小 |
-| E5 忠实度（遮挡实验） | `e5.py` | EMD 窗口遮挡下降 3.67% vs 近期 2.27%，p=7.3e-07，Cohen's d=0.625 |
-| E6 敏感性（block_size=1/2/5） | `e6.py` | 方法对掩码粒度鲁棒 |
-| **实验二（多Δt提前预测）** | `exp_anticipation.py` | **Δt*=250ms；LSTM在现有模型下所有Δt均满足F1≥0.80** |
-| **实验四（自适应对齐）** | `exp_alignment.py` | Eval: individual≈fixed_55ms（p=0.676，d=-0.003）；Train模式进行中 |
-
-### 关键数字
-
-- E3 有效峰值均值：**55.6 ± 26.5 ms**（生理合理范围 30–100 ms）
-- E5：**p = 7.3e-07**，**Cohen's d = 0.625**（中等效应），Wilcoxon p = 3.3e-09
-- E5 影响比：**Rf = 1.61**（EMD 窗口影响是近期窗口的 1.61 倍）
-- **实验二（Eval）**：Δt*=250ms；Δt=250ms时 F1=0.836±0.080，Acc=0.862
-- **实验四（Eval）**：individual(F1=0.873) vs fixed_55ms(F1=0.874)，p=0.676（等价）
+| 数据划分防泄漏 | `common.py` 中 `blocked_time_split()` 已全面替代 `random_split`，含 gap + assert |
+| 环境锁定文件 | `requirements.txt` + `environment.yml` 已存在且包含 `shap==0.51.0` |
+| E3 峰值与受试者名单统一 | `good_subjects.json`（39人）与 `subject_peaks_e3.json`（39人）完全一致 |
+| E12 噪声鲁棒性 | 已跑完全部 39 subjects |
+| 多 Baseline 分布对比框架 | `e13_baseline_comparison.py` 已有 4 种 baseline，初步结果存在 |
+| 手势类型 EMD 差异分析框架 | `e16_gesture_emd.py` 已有初步结果 |
+| AOPC 框架 | `e15_aopc.py` 已实现 |
+| IG / DeepLIFT 框架 | `e14_xai_baselines.py` 已用 captum 实现 |
 
 ---
 
-## 二、完整实验设计方案（提案）与现有代码对照
+## 二、待完成任务清单
 
-### 总体映射
+### P0 — 必须完成（审稿人核心攻击点）
+
+#### P0-1. 补充 TimeSHAP + TSR 时序 XAI 基线
+
+**审稿依据**：
+- PC#1: "no head-to-head with TimeSHAP (KDD'21) or TSR (2010.13924)"
+- PC#3: "No comparison against TimeShap... its absence is a notable gap"
+- 改进建议: "还需对比 TimeSHAP、WindowSHAP"
+
+**现状**：`e14_xai_baselines.py` 已有 ST-SRI vs SHAP vs IG vs DeepLIFT，
+但代码中**零引用** TimeSHAP / TSR / WindowSHAP。
+
+**行动项**：
+1. 安装 `timeshap` 包（`pip install timeshap`），实现 TimeSHAP 在 LSTM 上的归因
+2. 实现 TSR（Temporal Saliency Rescaling）：
+   - 先用 IG/DeepLIFT 获得 element-wise saliency
+   - 按 TSR 论文做两步 rescaling：时间维聚合 → 特征维 rescaling
+3. 统一对比指标：Stability（跨样本一致性）、Peak-in-EMD ratio、Fragmentation、AOPC
+4. 扩大样本量：从当前 5 subjects → 全部 39 subjects
+5. 输出：`results/xai_baselines/` 下生成对比表 + 对比图
+
+**文件**：修改 `experiments/advanced/e14_xai_baselines.py`
+
+---
+
+#### P0-2. 补充 TCN / Transformer 架构验证
+
+**审稿依据**：
+- PC#3: "Only LSTMs are evaluated... unclear whether generalizes to TCN, Transformer"
+- 改进建议: "需证明通用性，从'工具改进'到'范式提出'"
+
+**现状**：`common.py` 仅有 `LSTMModel`，全项目无 TCN/Transformer 代码。
+
+**行动项**：
+1. 在 `common.py` 中新增：
+   - `TCNModel`：基于 `torch.nn.Conv1d` 的因果卷积网络，kernel_size=7，3 层
+   - `TransformerModel`：基于 `torch.nn.TransformerEncoder`，4 层，8 heads
+2. 用 `e0_train.py` 的框架为每个架构训练 per-subject 模型
+3. 对 3 种架构分别运行 ST-SRI 解释，对比：
+   - 协同峰位置是否一致（核心：证明 ST-SRI 发现的 EMD 是数据特性而非模型特性）
+   - Faithfulness Ratio (Rf) 在不同架构下是否稳定
+4. 输出：`results/multi_arch/` 下生成跨架构对比表
+
+**文件**：修改 `common.py`，新增 `experiments/advanced/e17_multi_arch.py`
+
+---
+
+#### P0-3. E11 LOSO 完整重跑
+
+**审稿依据**：审稿人均要求完整的跨受试者泛化证据。
+
+**现状**：
+- `results/loso/loso_results.json` 仅含 3 个 subjects（S1/S2/S3）
+- README 声称 "63.5%±1.5%" 与实际 JSON（mean=54.0%）不符
+- 完整重跑已在后台启动（2026-04-11）
+
+**行动项**：
+1. 等待当前后台任务完成
+2. 验证结果 JSON 完整性（应有 39 个 fold）
+3. 更新 README 中的数值
+
+**文件**：`experiments/advanced/e11.py`，`results/loso/`
+
+---
+
+### P1 — 应该完成（审稿人明确提出）
+
+#### P1-1. τ_max 消融扫描
+
+**审稿依据**：
+- PC#3: "τ_max=150ms implicitly tuned to find peaks in 30-100ms;
+  a more agnostic τ_max sweep would strengthen trust"
+
+**现状**：`scan_fast()` 中 `max_lag_ms=150` 是硬编码默认值，无扫描实验。
+
+**行动项**：
+1. 新建实验：对 τ_max = {100, 150, 200, 300, 500} ms 分别运行 E3 协同谱扫描
+2. 统计每组的协同峰位置分布，验证峰值位置不随 τ_max 改变
+3. 记录计算时间随 τ_max 的增长趋势
+4. 输出：τ_max 消融图 + 峰值稳定性统计表
+
+**文件**：新增 `experiments/advanced/e18_tau_max_ablation.py`
+
+---
+
+#### P1-2. 修复 AOPC 异常值 + 失败案例分层分析
+
+**审稿依据**：
+- PC#3: "7 subjects (18%) have faithfulness ratio <1.0;
+  S1 (81.25% accuracy) is not explained"
+- PC#1: "reported p-values in text vs figure differ"
+
+**现状**：
+- `e15_aopc.py` 结果中 S1 的 SHAP AOPC = 0.0（完全无效），疑似 bug
+- 无按模型精度分层的失败案例分析
+
+**行动项**：
+1. 排查 SHAP AOPC = 0 的根因（可能是 SHAP 归因集中在少数时间步，AOPC 扰动未覆盖）
+2. 扩大 AOPC 评估样本量（当前 NUM_SAMPLES=15，建议增至 50）
+3. 新增分层分析：
+   - 按模型准确率分组（高>85% / 中70-85% / 低<70%）
+   - 对 Rf < 1.0 的 subjects 逐个分析原因
+4. 统一论文中 p 值口径（使用 Bonferroni 校正后数值）
+
+**文件**：修改 `experiments/advanced/e15_aopc.py`，新增分析脚本
+
+---
+
+#### P1-3. Shapley 交互指数理论严谨性补充
+
+**审稿依据**：
+- PC#1: "not the full Shapley-Taylor interaction averaged over all coalitions;
+  theoretical link is therefore incomplete"
+- 改进建议: "从 PID 角度论证；讨论二阶 vs 高阶交互"
+
+**现状**：纯论文写作问题，但可通过实验辅助。
+
+**行动项**：
+1. 论文 Methodology 节补充：
+   - 明确说明采用的是 Shapley Interaction Index 的简化形式（固定 context），
+     而非完整的 Shapley-Taylor interaction
+   - 从 PID（Partial Information Decomposition）角度论证
+     Synergy/Redundancy 的信息论意义
+   - 讨论为何二阶交互已足够捕捉 sEMG 的主要生理特性
+2. 实验辅助（可选）：新增 context sampling 消融
+   - 在不同随机 context subsets 下计算交互指数，验证结果稳定性
+
+**文件**：论文正文修改 + 可选新增实验
+
+---
+
+### P2 — 建议完成（提升论文质量）
+
+#### P2-1. E13 Baseline 分布对比扩大样本量
+
+**现状**：已跑 S1-S9（9 subjects），4 种 baseline 结果基本一致。
+
+**行动项**：
+- 扩大到全部 39 subjects
+- 在论文 Appendix 中报告结果
+
+**文件**：`experiments/advanced/e13_baseline_comparison.py`
+
+---
+
+#### P2-2. E14 XAI 基线对比扩大样本量
+
+**现状**：已跑 5 subjects。
+
+**行动项**：
+- 配合 P0-1（补 TimeSHAP/TSR 后）一并扩大到全部 39 subjects
+
+**文件**：`experiments/advanced/e14_xai_baselines.py`
+
+---
+
+#### P2-3. 更新 README 数值一致性
+
+**现状**：README 中部分数值与实际 JSON 结果不一致（如 E11）。
+
+**行动项**：
+- 待所有实验重跑完成后统一更新
+- 确保每个数值有 JSON 文件可追溯
+
+**文件**：`README.md`
+
+---
+
+### P3 — 长期目标（改进建议提出，审稿人未要求）
+
+#### P3-1. 多数据集验证
+
+**改进建议**："增加 CapgMyo 或 CSL-HDEMG 数据集"
+
+**行动项**：
+- 下载 CapgMyo（高密度 sEMG）数据集
+- 适配预处理流程
+- 运行 E3 + E5 验证 ST-SRI 在不同数据集上的表现
+
+**时间**：投 TNNLS 前完成
+
+---
+
+#### P3-2. 因果性实验
+
+**PC#1**："causal interpretation of positive synergy is suggestive but not identified;
+synergy remains correlational"
+
+**行动项**：
+- 设计因果干预实验：在特定 lag 注入人工延迟/取消延迟，
+  观察 ST-SRI 协同峰是否相应移动
+- 与 E2（合成信号验证）类似但更严格
+
+---
+
+## 三、执行优先级与时间估算
 
 ```
-提案完整证据链：
-  [EMD存在] → [提前预测可行] → [SRI能定位窗口] → [定位窗口能改善预测]
-      ↑              ↑                 ↑                    ↑
-   E3间接覆盖    ✅ exp_anticipation    E1-E6基本覆盖     ✅ exp_alignment(train进行中)
-   缺直接量化    Δt*=250ms(eval)                         train结果待定
+Week 1:  P0-3(E11重跑等待) + P0-2(TCN/Transformer实现+训练)
+Week 2:  P0-1(TimeSHAP+TSR实现+全量运行)
+Week 3:  P1-1(τ_max消融) + P1-2(AOPC修复+分层分析)
+Week 4:  P2-*(扩大样本量) + P1-3(论文理论补充)
+Week 5:  论文修订 + 数值统一 + 提交
 ```
 
-| 提案实验 | 内容 | 现有代码 | 覆盖状态 | 优先级 |
-|---------|------|---------|---------|--------|
-| **实验一** | sEMG onset vs 机械 onset 直接 EMD 量化 | E3（间接） | 部分覆盖 | P1 |
-| **实验二** | 多 Δt（0/50/100/150/200/250 ms）提前预测 | `exp_anticipation.py` | ✅ **已完成** | P0 |
-| **实验三** | ST-SRI 协同谱验证、稳定性、faithfulness | E1~E6 | 基本覆盖 | 已有 |
-| **实验四** | 解释驱动自适应对齐补偿 | `exp_alignment.py` | ⏳ **train进行中** | P0 |
-| **实验五** | SRI 通道筛选 | 无 | 缺失 | P2 |
-| **实验六** | 跨受试者/跨天泛化，噪声鲁棒性 | 无 | 缺失 | P2 |
+| 阶段 | 任务 | 预计工作量 | 产出 |
+|------|------|-----------|------|
+| Week 1 | TCN + Transformer 模型实现与训练 | 3 天 | `common.py` 新模型 + 40×2 checkpoints |
+| Week 1 | E11 重跑验证 | 等待 | `results/loso/loso_results.json` |
+| Week 2 | TimeSHAP + TSR 集成 | 3 天 | `e14_xai_baselines.py` 扩展版 |
+| Week 2 | 全量 XAI 基线对比运行 | 2 天 | 39 subjects × 5 methods |
+| Week 3 | τ_max 消融实验 | 1 天 | `e18_tau_max_ablation.py` |
+| Week 3 | AOPC 修复 + 分层分析 | 2 天 | `e15_aopc.py` 修订版 |
+| Week 4 | 扩大 E13/E14 样本量 | 1 天 | 全量结果 |
+| Week 4 | 论文 Methodology 理论补充 | 2 天 | PID 论证 + Shapley 简化说明 |
+| Week 5 | 数值统一 + README 更新 + 提交 | 2 天 | 最终版论文 |
 
 ---
 
-## 三、各实验详细方案
+## 四、审稿人关键引用（便于 Rebuttal）
 
-### 实验一：确认 EMD 错位（补充直接量化）
+### PC#1 核心要求
+> "No head-to-head with strong time-series explainers like TimeSHAP (KDD'21) or
+> Temporal Saliency Rescaling (TSR, 2010.13924)"
 
-**目标**：直接对每个 trial 计算 sEMG onset 与 force/kinematic onset 的时间差，证明"EMD 不是常数"。
+→ 对应 **P0-1**
 
-**方法**：
-- sEMG onset：带通滤波（20–450 Hz）→ 整流 → 平滑（50 ms RMS）→ 阈值法或 Teager-Kaiser 能量法
-- 机械 onset：DB2 中的 force 或 kinematic 信号，同样阈值检测
-- 计算每个 trial 的 EMD = 机械 onset − sEMG onset
-- 统计：每动作、每受试者的均值 ± 标准差
+> "The Shapley interaction index used is a single four-term inclusion-exclusion quantity...
+> the theoretical link to Shapley interactions is therefore incomplete"
 
-**输出**：EMD 分布表 + 个体差异图 + 动作差异图
+→ 对应 **P1-3**
 
-**与 E3 关系**：E3 是 XAI 视角下的间接验证，此实验是信号处理层面的直接 ground truth，两者互补。
+### PC#2 核心要求
+> "The paper seems to be rather tailored for the specific application area"
 
----
+→ 对应 **P0-2**（多架构证明通用性）+ **P3-1**（多数据集）
 
-### 实验二：多 Δt 提前预测 baseline（**首要开发目标**）
+### PC#3 核心要求
+> "Only LSTMs are evaluated... unclear whether the synergy decomposition
+> generalizes to other sequence models (TCN, Transformer)"
 
-**目标**：建立"给定提前量 Δt，预测未来动作意图"的标准任务框架。
+→ 对应 **P0-2**
 
-**任务设计**：
-- 提前量：Δt = 0, 50, 100, 150, 200, 250 ms
-- 输入：当前时刻之前 300 ms 的 sEMG 窗口（固定长度）
-- 标签：当前时刻 **之后 Δt ms** 的动作类别
-- 实现：`NinaProDataset` 增加 `anticipation_ms` 参数，label 取 `window_end + Δt` 处的类别
+> "τ_max=150ms... the paper does not fully rule out that the method is designed
+> to find peaks in a range it was already tuned to look at"
 
-**对比模型**：
-- SVM（时域/频域特征）
-- 1D-CNN / TCN
-- LSTM（现有）
+→ 对应 **P1-1**
 
-**核心评价指标**：
-- Accuracy、Macro-F1
-- **最早稳定提前量 Δt\***：Macro-F1 > 0.80 且跨受试者标准差可接受时，对应最大 Δt
+> "The 1.62× accuracy drop ratio is numerically modest...
+> For 7 subjects (18%), the faithfulness ratio is below 1.0"
 
-**关键改动（`common.py`）**：
-```python
-class NinaProDataset(Dataset):
-    def __init__(self, ..., anticipation_ms=0):
-        self.anticipation_steps = int(anticipation_ms * self.fs / 1000)
-
-    def __getitem__(self, idx):
-        start = idx * self.stride
-        end = start + self.window_len
-        label_pos = end + self.anticipation_steps  # 标签前移
-        if label_pos >= len(self.labels):
-            label_pos = len(self.labels) - 1
-        return self.data[start:end, :], self.labels[label_pos]
-```
+→ 对应 **P1-2**
 
 ---
 
-### 实验三：SRI 解释验证（已基本完成）
+## 五、文件变更清单（预期）
 
-**已完成**：E1（消融）、E2（机理）、E3（生理）、E4（稳定性）、E5（faithfulness）、E6（敏感性）
-
-**待完善**：
-- E5 目前对照是"最近 0–20 ms 窗口"，可补充**真随机位置窗口**作为第三对照，使 Rf 计算更严格
-- 统计方案：已有 paired t-test + Cohen's d + Bootstrap CI + Wilcoxon，符合要求
-
-**Faithfulness Ratio（Rf）定义**：
-$$R_f = \frac{\Delta\text{Perf}_{\text{SRI-window}}}{\Delta\text{Perf}_{\text{control-window}}}$$
-
-现有结果：Rf = 3.67% / 2.27% = **1.61**（> 1，SRI 窗口更关键）
-
----
-
-### 实验四：解释驱动的自适应对齐补偿（**核心创新目标**）
-
-**目标**：将 E3 检测到的协同峰位置（存于 `subject_peaks_e3.json`）用于窗口前移，形成"解释 → 补偿 → 提升性能"的闭环。
-
-**三种补偿策略对比**：
-
-| 策略 | 方法 | 实现 |
+| 操作 | 文件 | 说明 |
 |------|------|------|
-| 固定补偿 | 统一前移 50 ms 或 70 ms | anticipation_ms 设为固定值 |
-| 个体级补偿 | 每受试者用训练集协同峰均值 | 从 subject_peaks_e3.json 读取 |
-| 动作级/自适应补偿 | 按动作类别或 trial 动态估计 | 对每类动作单独计算协同峰 |
-
-**评价指标**：
-- 各 Δt 下的 Accuracy、F1
-- 最早稳定提前量 Δt*（相同准确率门槛下，自适应是否比固定多提前 30–50 ms）
-- 端到端反应延迟代理指标
-
----
-
-### 实验五：通道筛选与机制
-
-**目标**：用 SRI 的独立性 + 协同性筛选通道，比较 12→8→6→4 通道时的性能下降曲线。
-
-**筛选策略对比**：随机筛选 / 单独 SHAP 排序 / 传统特征选择 / SRI 组合贡献筛选
-
----
-
-### 实验六：泛化与鲁棒性
-
-**目标**：跨受试者（DB2 Leave-one-out 或 DB6 跨天）+ 模拟噪声扰动（电极偏移、掉道、幅值漂移、SNR 下降）。
-
-**核心关注点**：在时序扰动下，协同峰位置是否稳定（vs 标准 SHAP 解释漂移）。
-
----
-
-## 四、统计方案
-
-| 因变量 | 检验方法 |
-|--------|---------|
-| Accuracy、Macro-F1、AUC | 重复测量 ANOVA（方法 × Δt × 受试者） |
-| 协同峰时滞 τ* | Wilcoxon 符号秩检验（分布不正态时） |
-| Faithfulness 比较 | Paired t-test + Cohen's d + Bootstrap CI |
-| 通道筛选性能 | Friedman 检验（多组非参数） |
-
-统一报告效应量：Cohen's d 或 Cliff's delta。
-
----
-
-## 五、优先级行动计划
-
-### P0（当前任务）
-
-1. **修改 `common.py`**：NinaProDataset 增加 `anticipation_ms` 参数
-2. **创建 `exp_anticipation.py`**：多 Δt × 多模型的提前预测实验框架
-3. **创建 `exp_alignment.py`**：读取 `subject_peaks_e3.json`，实现三种对齐补偿策略，评估提前预测性能提升
-
-### P1
-
-4. **补充实验一**：用 DB2 force/kinematic 数据做 sEMG onset vs 机械 onset 直接量化
-5. **强化 E5**：增加真随机位置对照组，完善 Rf 计算
-
-### P2
-
-6. **实验五**：通道筛选
-7. **实验六**：泛化鲁棒性（DB6 或跨受试者）
-
----
-
-## 六、已知问题与建议
-
-### E3 相关
-
-- 改进版（平衡采样）失败（成功率 10.3%），已回退使用原始版本（56.4%）
-- 根本原因：ST-SRI 对 baseline 敏感，block_size=2（1 ms）粒度过细
-- **论文策略**：诚实报告 56% 并分析失败原因，定位为 proof-of-concept
-
-### ST-SRI 方法局限性
-
-1. **Baseline 依赖**：当前使用随机 20 样本均值，建议改为 rest 类别样本均值
-2. **Block size**：2000 Hz 下 block_size=2 仅遮挡 1 ms，EMD 是 30–100 ms 现象，建议增大到 10–20
-3. **因果方向不明确**：遮挡导致的性能下降可能来自真实时序依赖或模型记忆效应
-
----
-
-## 七、投稿建议
-
-| 会议 | 适合度 | 原因 |
-|------|--------|------|
-| **EMBC** | ⭐⭐⭐⭐⭐ | 生物医学工程，接受探索性工作 |
-| **ICASSP** | ⭐⭐⭐⭐ | 信号处理，重视方法创新 |
-| NeurIPS XAI Workshop | ⭐⭐⭐⭐ | 探索性方法理想平台 |
-| IJCNN | ⭐⭐⭐ | 接受范围广 |
-| NeurIPS/ICML 主会 | ❌ | 56% 成功率不够 |
-
----
-
-## 八、论文框架（完成 P0 后）
-
-**标题建议**：
-*Interpretable Early Motion Intent Recognition from sEMG via Synergy-Guided Temporal Alignment*
-
-**Abstract 核心 claim**（目标状态）：
-1. ST-SRI 能稳定定位个体化 EMD 窗口（E3，56.4%，55.6 ms）
-2. 该窗口对提前预测模型决策具有显著 faithfulness（E5，p<0.001，d=0.625）
-3. 将该窗口用于自适应对齐后，在相同准确率门槛下比固定补偿额外提前 X ms（实验四结果待填）
-
----
-
-## 九、参考文献（关键）
-
-- Cavanagh & Komi (1979). Electromechanical delay in human skeletal muscle. *Eur J Appl Physiol*.
-- Atzori et al. (2014). NinaPro DB2. *Scientific Data*, 1, 140053.
-- Lundberg & Lee (2017). SHAP. *NeurIPS*.
-- Sundararajan et al. (2017). Integrated Gradients. *ICML*.
+| 修改 | `common.py` | 新增 TCNModel + TransformerModel |
+| 修改 | `experiments/advanced/e14_xai_baselines.py` | 集成 TimeSHAP + TSR |
+| 修改 | `experiments/advanced/e15_aopc.py` | 修复异常值 + 分层分析 |
+| 新增 | `experiments/advanced/e17_multi_arch.py` | 跨架构 ST-SRI 验证 |
+| 新增 | `experiments/advanced/e18_tau_max_ablation.py` | τ_max 消融扫描 |
+| 更新 | `requirements.txt` | 添加 `timeshap` 依赖 |
+| 更新 | `environment.yml` | 添加 `timeshap` 依赖 |
+| 更新 | `README.md` | 数值一致性修正 |
+| 更新 | `results/` | 各实验全量结果 |
