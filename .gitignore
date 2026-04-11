@@ -9,3 +9,5 @@ results/
 .idea/
 .DS_Store
 *.pdf
+.vscode/
+.claude/
