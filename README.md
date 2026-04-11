@@ -97,10 +97,18 @@ ST_SRI_Project/
 
 ### 1. 环境配置
 ```bash
-conda create -n xai_lab python=3.9
-conda activate xai_lab
-pip install torch numpy scipy matplotlib pandas scikit-learn
+# 方式一：conda
+conda env create -f environment.yml
+conda activate st-sri
+
+# 方式二：pip
+python -m venv .venv
+source .venv/bin/activate  # Windows PowerShell: .venv\\Scripts\\Activate.ps1
+pip install -r requirements.txt
 ```
+
+建议优先使用仓库根目录提供的 `environment.yml` 或 `requirements.txt`，
+其中已补充 `shap` / `captum` 版本范围以降低与 NumPy / PyTorch 的兼容性问题。
 
 ### 2. 数据预处理
 ```bash
@@ -113,11 +121,18 @@ python scripts/01_preproccess.py
 python experiments/basic/e3.py
 python experiments/basic/e5_enhanced.py
 
-# 补充实验 (需要较长时间)
+# 补充实验
+python experiments/advanced/e11.py --limit 5          # LOSO smoke test
+python experiments/advanced/e12.py --fast             # 噪声鲁棒性 smoke test
 python experiments/advanced/e8.py --mode eval
 python experiments/advanced/e9.py --mode eval
 python experiments/advanced/e7.py
 ```
+
+说明：
+- 当前正式口径已统一为无泄漏 blocked split，避免重叠滑窗造成 train/val 泄漏；
+- E3/E5/E5_enhanced/E9 默认使用 `good_subjects.json` 与 `subject_peaks_e3.json` 的交集；
+- 峰值有效区间统一为 `30–100ms`，超出范围时回退到有效峰值全局均值。
 
 ---
 
